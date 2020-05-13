@@ -1,5 +1,5 @@
 # C. Hales, NRAO
-# version 1.0 (22 April 2020)
+# version 1.0 (27 April 2020)
 #
 # Measure image dynamic range and fidelity achievable with different dynamic pointing
 # errors for ngVLA MA revC (214 x 18m).  The procedure involves constructing mis-pointed
@@ -1080,7 +1080,7 @@ def main():
             outf = prefix+'_nchan-'+str(nchan[i])+'_'+slinfo+'_results.txt'
             f = open(outf,'w')
             if nchan[i] > 1: f.write('# injected spectral index = '+str(spindx)+'\n')
-            f.write('# perr (arcsec)    dynamic range\n')
+            f.write('# perr (arcsec)    dynamic range    fidelity\n')
             for m in range(len(perr)):    # number of pointing errors
                 print ('=== Processing '+slinfo+', nchan='+str(nchan[i])+\
                        ', pointing error='+str(perr[m])+'" ===')
