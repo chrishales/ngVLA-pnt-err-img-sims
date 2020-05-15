@@ -5,6 +5,8 @@ Scripts used to obtain the results presented in [ngVLA Memo 75](https://library.
 
 The scripts simulate interferometric observations in the presence of antenna pointing errors, with application to the ngVLA's Short Baseline Array (SBA) and Main Array (MA).
 
+Latest version: 1.0 ([download here](https://github.com/chrishales/ngVLA-pnt-err-img-sims/releases/latest))
+
 Requires: Python 3.6 and [CASA 6.0](https://casa.nrao.edu/casadocs/casa-5.6.0/introduction/casa6-installation-and-usage)
 
 Acknowledging use
