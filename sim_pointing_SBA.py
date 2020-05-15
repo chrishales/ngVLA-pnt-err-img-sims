@@ -1,5 +1,5 @@
 # C. Hales, NRAO
-# version 1.0 (22 April 2020)
+# version 1.0 (24 April 2020)
 #
 # Measure image dynamic range and fidelity achievable with different dynamic pointing
 # errors for ngVLA SBA revC (19 x 6m).  The procedure involves constructing mis-pointed
@@ -17,6 +17,7 @@
 #          * EVLA Memo 84
 #          * https://ieeexplore.ieee.org/document/7762834
 #          * ngVLA Memo 60
+#          * ngVLA Memo 67
 #
 # requires: Python 3.6 and CASA 6.0
 # suggested: build the tools and tasks for CASA 6.0 from modified source (see reason below)
@@ -129,11 +130,15 @@
 #      not the same as rms, but should be approximately the same for this simulation
 #      with expected zero mean & median.  (The rms isn't extracted because the few
 #      pixels near the 0.1 cutoff will otherwise bias the results.)
-# - fidelity is defined in calcStats as 1 - abs(image_pbcor_sum - model_true_sum) /
-#      model_true_sum , where the sum over pixels in the PB-corrected image is only
-#      performed within the pbthresh=70% mosaic PB contour and includes conversion
-#      from units of surface brightness to flux density.  The 70% contour comfortably
-#      encloses the injected sources in this simulation for the 3 and 7 pt mosaics
+# - fidelity is defined in calcStats following the F_3 metric from ngVLA Memo 67,
+#      but with some corrections.  See Equation 7 in that memo for the notation.
+#      Here, image M is the true sky model attenuated by the PB and only then
+#      convolved with the PSF.  And here, to be consistent, image I is the
+#      PB-uncorrected dirty image.  A nice thing about these definitions is that
+#      this image fidelity metric is insensitive to deconvolution errors.
+#      The sums over pixels are only performed within the pbthresh=50% mosaic
+#      PB contour, following ngVLA Memo 67.  The 70% contour comfortably encloses
+#      the injected sources in this simulation for the 3 and 7 pt mosaics.
 
 #########################################################################################
 
@@ -151,7 +156,7 @@ telname = 'NGVLA_SBA'    # rename header from antloc
                          #    of telname.  Note that tclean is also affected by this,
                          #    but not for the continuum imaging of interest here.
 
-perr = [0,10,20,40,60]   # list of pointing errors, radial rms in arcsec
+perr = [0,10,20,40,60]   # list of pointing errors, radial rms in arcsec            ################## [0,10,20,40,60]
 freq      = 27           # central frequency of band, in GHz
 spwname   = 'Band4'      # spectral window name to record in MS
 chanbw    = 1000         # channel bandwidth, in MHz
@@ -188,7 +193,7 @@ imsize_pb = 4096         # ensure that cell_pb*imsize_pb is around 3 x HPBW so t
                          #    functions are sampled by at least a few dozen pixels
                          #   (don't go larger than 4096, or even 2048, or else you
                          #    will probably run out of memory)
-cleanfrac = [0.002,0.002,0.006,0.01,0.02]
+cleanfrac = [0.002,0.002,0.006,0.01,0.02]                         ################################### [0.002,0.002,0.006,0.01,0.02]
                          # cleaning threshold as fraction of peak in dirty image,
                          #   corresponding to each perr above (independent of
                          #   nchan or pointings).  Ensure cleanfrac doesn't exceed
@@ -207,7 +212,7 @@ cleanfrac = [0.002,0.002,0.006,0.01,0.02]
                          #     cleanfrac=[0.002,0.002,0.002,0.005,0.007]
                          #   * perr=[0,10,20,40,60], pnts=[3], nint=3, nchan=[13],
                          #     cleanfrac=[0.002,0.005,0.008,0.05,0.05]
-pbthresh  = 0.7          # mosaic PB contour in which to calculate fidelity stats
+pbthresh  = 0.8          # mosaic PB contour in which to calculate fidelity stats         ########### 0.5
 nterms    = 3            # number of taylor terms for cleaning multi-channel cases
                          #   (select >2 to ensure expansion errors don't dominate)
 
@@ -221,7 +226,7 @@ testingT  = 1            # integration number (0-based) to write images above,
 rapidtest = False        # if True, and if testing=True, ignore obsdur and only
                          #    run the simulation at a single timestep (and single
                          #    pointing; consider cleanfrac) at timestep = testingT
-imgOnly   = False        # If True, don't run simulations, only perform imaging and
+imgOnly   = True        # If True, don't run simulations, only perform imaging and         ############ False
                          #    write out new results.  If False, include simulations.
                          #    You must run with False prior to running with True.
 
@@ -486,36 +491,61 @@ def makeMSFrame(nchanindx,pointingsindx,perrindx):
     # flagdata(vis=msname1,mode='unflag')  # commented in case elevation/shadow flags matter
 
 # transfer component list into model images for all pointing directions
+# also create model image consistent with output mosaic image, for fidelity metric later
 def makeModelImages(nchanindx,pointingsindx):
     numchan = nchan[nchanindx]
     numpt   = pointings[pointingsindx]
     c       = pntCntrs(numpt)
     clname  = prefix+'.cl'
-    for p in range(numpt):
-        imname = prefix+'_nchan-'+str(numchan)+'_numpt-'+str(numpt)+'_pt-'+str(p)+\
-                 '.model.im'
-        # first, create empty image, then populate
-        ia.close()
-        ia.fromshape(imname,[imsize_pb,imsize_pb,1,numchan],overwrite=True)
-        cs = ia.coordsys()
-        cs.setunits(['rad','rad','','Hz'])
-        cs.setincrement([np.deg2rad(-cell_pb),np.deg2rad(cell_pb)],'direction')
-        cs.setreferencevalue([c[p].ra.to_string(u.rad),
-                              c[p].dec.to_string(u.rad)],type='direction')
-        cs.setreferencevalue(str(freq)+'GHz','spectral')
-        cs.setreferencepixel([(numchan-1)/2],'spectral')
-        cs.setincrement(str(chanbw)+'MHz','spectral')
-        ia.setcoordsys(cs.torecord())
-        ia.setbrightnessunit('Jy/pixel')
-        ia.set(0.0)
-        ia.close()
-        # populate model image with component list
-        cl.open(clname)
-        ia.open(imname)
-        ia.modify(cl.torecord(),subtract=False)
-        ia.close()
-        cl.done()
-        if testing: exportfits(imagename=imname,fitsimage=imname.replace('.im','.fits'))
+    #for p in range(numpt):
+    #    imname = prefix+'_nchan-'+str(numchan)+'_numpt-'+str(numpt)+'_pt-'+str(p)+\
+    #             '.model.im'
+    #    # first, create empty image, then populate
+    #    ia.close()
+    #    ia.fromshape(imname,[imsize_pb,imsize_pb,1,numchan],overwrite=True)
+    #    cs = ia.coordsys()
+    #    cs.setunits(['rad','rad','','Hz'])
+    #    cs.setincrement([np.deg2rad(-cell_pb),np.deg2rad(cell_pb)],'direction')
+    #    cs.setreferencevalue([c[p].ra.to_string(u.rad),
+    #                          c[p].dec.to_string(u.rad)],type='direction')
+    #    cs.setreferencevalue(str(freq)+'GHz','spectral')
+    #    cs.setreferencepixel([(numchan-1)/2],'spectral')
+    #    cs.setincrement(str(chanbw)+'MHz','spectral')
+    #    ia.setcoordsys(cs.torecord())
+    #    ia.setbrightnessunit('Jy/pixel')
+    #    ia.set(0.0)
+    #    ia.close()
+    #    # populate model image with component list
+    #    cl.open(clname)
+    #    ia.open(imname)
+    #    ia.modify(cl.torecord(),subtract=False)
+    #    ia.close()
+    #    cl.done()
+    #    if testing: exportfits(imagename=imname,fitsimage=imname.replace('.im','.fits'))             ############ uncomment all
+    
+    # create model with same image parameters as later image mosaic
+    # for numchan>1 only create a model image with 1 channel at freq
+    imname = prefix+'_nchan-'+str(numchan)+'_numpt-'+str(numpt)+'_mosaic.model.im'
+    ia.close()
+    ia.fromshape(imname,[imsize_pb,imsize_pb,1,1],overwrite=True)
+    cs = ia.coordsys()
+    cs.setunits(['rad','rad','','Hz'])
+    cs.setincrement([np.deg2rad(-cell_pb),np.deg2rad(cell_pb)],'direction')
+    cs.setreferencevalue([c_transit.ra.to_string(u.rad),
+                          c_transit.dec.to_string(u.rad)],type='direction')
+    cs.setreferencevalue(str(freq)+'GHz','spectral')
+    cs.setreferencepixel([0],'spectral')
+    cs.setincrement(str(chanbw)+'MHz','spectral')
+    ia.setcoordsys(cs.torecord())
+    ia.setbrightnessunit('Jy/pixel')
+    ia.set(0.0)
+    ia.close()
+    cl.open(clname)
+    ia.open(imname)
+    ia.modify(cl.torecord(),subtract=False)
+    ia.close()
+    cl.done()
+    if testing: exportfits(imagename=imname,fitsimage=imname.replace('.im','.fits'))
 
 # function to construct template images to later store antenna/baseline primary beams
 # (legacy: and antenna aperture illumination functions) for all pointing directions
@@ -1011,6 +1041,16 @@ def makeImg(nchanindx,pointingsindx,perrindx,vptab):
                                            unitname='rad'))[0] + ' ' +\
                                    qa.angle(qa.quantity(myphasecenter['m1']['value'],
                                            unitname='rad'))[0]
+    
+    trueskyJYPIX    = '../'+prefix+'_nchan-'+str(numchan)+'_numpt-'+\
+                      str(pointings[pointingsindx])+'_mosaic.model.im'
+    trueskyJYPIXpba = 'sim.truesky.pbattn'
+    trueskyJYBEAM   = 'sim.truesky.pbattn.conv'
+    ia.open(trueskyJYPIX)
+    truesky_cs      = ia.coordsys()
+    truesky_shape   = ia.shape()
+    ia.close()
+    
     if numchan == 1:
         # dirty image
         tclean(vis='../'+msname,imagename='sim',imsize=imsize_pb,
@@ -1019,8 +1059,9 @@ def makeImg(nchanindx,pointingsindx,perrindx,vptab):
                weighting='natural',niter=0);
         mystats = imstat(imagename='sim.residual',listit=False,verbose=False);
         mythreshold = mystats['max'][0] * cleanfrac[perrindx]
-        #exportfits(imagename='sim.image',fitsimage='sim.image.dirty.fits')
-        #exportfits(imagename='sim.psf',fitsimage='sim.psf.fits')
+        os.system('cp -r sim.image sim.image.dirty')
+        exportfits(imagename='sim.image',fitsimage='sim.image.dirty.fits')                    ############## comment
+        exportfits(imagename='sim.psf',fitsimage='sim.psf.fits')                            ############## comment
         casalog.filter('INFO')   # reinstate info for imaging (after dirty image)
         # cleaned image
         tclean(vis='../'+msname,imagename='sim',imsize=imsize_pb,
@@ -1032,20 +1073,11 @@ def makeImg(nchanindx,pointingsindx,perrindx,vptab):
         #exportfits(imagename='sim.image',fitsimage='sim.image.fits')
         #exportfits(imagename='sim.residual',fitsimage='sim.residual.fits')
         #exportfits(imagename='sim.model',fitsimage='sim.model.fits')
-        #exportfits(imagename='sim.pb',fitsimage='sim.pb.fits')
-        casalog.filter('INFO')
-        # PB-corrected image
-        tclean(vis='../'+msname,imagename='sim',imsize=imsize_pb,
-               cell=str(cell_pb*3600)+'arcsec',gridder='mosaic',normtype='flatnoise',
-               vptable='../'+vptab,phasecenter=myphasecenter_str,weighting='natural',
-               niter=0,calcres=False,calcpsf=False,pbcor=True);
-        casalog.filter('SEVERE')
-        im.mask(image='sim.pb',mask='sim.pb.mask',threshold=pbthresh)
-        immath(imagename=['sim.image.pbcor'],outfile='sim.image.pbcor.masked',
-               mask='sim.pb.mask')
-        #exportfits(imagename='sim.image.pbcor',fitsimage='sim.image.pbcor.fits')
-        #exportfits(imagename='sim.image.pbcor.masked',
-        #           fitsimage='sim.image.pbcor.masked.fits')
+        exportfits(imagename='sim.pb',fitsimage='sim.pb.fits')                                  ############## comment
+        psf_im = 'sim.psf'
+        # PB-attenuate true sky model
+        immath(imagename=[trueskyJYPIX,'sim.pb'],outfile=trueskyJYPIXpba,
+               expr='IM0*IM1')
     else:
         # dirty image
         tclean(vis='../'+msname,imagename='sim',imsize=imsize_pb,
@@ -1054,6 +1086,7 @@ def makeImg(nchanindx,pointingsindx,perrindx,vptab):
                weighting='natural',deconvolver='mtmfs',nterms=nterms,niter=0);
         mystats = imstat(imagename='sim.residual.tt0',listit=False,verbose=False);
         mythreshold = mystats['max'][0] * cleanfrac[perrindx]
+        os.system('cp -r sim.image.tt0 sim.image.tt0.dirty')
         #exportfits(imagename='sim.image.tt0',fitsimage='sim.image.tt0.dirty.fits')
         #exportfits(imagename='sim.psf.tt0',fitsimage='sim.psf.tt0.fits')
         casalog.filter('INFO')   # reinstate info for imaging (after dirty image)
@@ -1069,28 +1102,19 @@ def makeImg(nchanindx,pointingsindx,perrindx,vptab):
         #exportfits(imagename='sim.residual.tt0',fitsimage='sim.residual.tt0.fits')
         #exportfits(imagename='sim.model.tt0',fitsimage='sim.model.tt0.fits')
         #exportfits(imagename='sim.pb.tt0',fitsimage='sim.pb.tt0.fits')
-        # PB-corrected image
-        # don't investigate spectral index recovery in this code
-        widebandpbcor(vis='../'+msname,imagename='sim',nterms=nterms,
-                      action='pbcor',spwlist=[0]*numchan,
-                      chanlist=list(range(numchan)),weightlist=[1]*numchan);
-        im.mask(image='sim.pb.tt0',mask='sim.pb.tt0.mask',threshold=pbthresh)
-        immath(imagename=['sim.pbcor.image.tt0'],outfile='sim.pbcor.image.tt0.masked',
-               mask='sim.pb.tt0.mask')
-        #exportfits(imagename='sim.pbcor.image.tt0',
-        #           fitsimage='sim.pbcor.image.tt0.fits')
-        #exportfits(imagename='sim.pbcor.image.tt0.masked',
-        #           fitsimage='sim.pbcor.image.tt0.masked.fits')
+        psf_im = 'sim.psf.tt0'
+        # PB-attenuate true sky model
+        immath(imagename=[trueskyJYPIX,'sim.pb.tt0'],outfile=trueskyJYPIXpba,
+               expr='IM0*IM1')
     
+    # convolve PB-attenuated true sky model with PSF, for fidelity metric later
+    ia.open(trueskyJYPIXpba)
+    truesky_im=ia.convolve(outfile=trueskyJYBEAM,kernel=psf_im,scale=1.0)
+    truesky_im.setbrightnessunit('Jy/beam')
+    truesky_im.done()
+    ia.close()
+    exportfits(imagename=trueskyJYBEAM,fitsimage=trueskyJYBEAM+'.fits')                            ############## comment
     os.chdir('../')
-
-# conversion factor between flux density in Jy and surface brightness in Jy/beam
-# see BLOBCAT if you want something better (http://blobcat.sourceforge.net)
-def getBeamVol(img):
-    hdr    = imhead(img)
-    bmaj   = qa.convert(qa.quantity(hdr['restoringbeam']['major']),'rad')['value']
-    bmin   = qa.convert(qa.quantity(hdr['restoringbeam']['minor']),'rad')['value']
-    return np.pi/(4*np.log(2))*bmaj*bmin/np.deg2rad(cell_pb)**2
 
 # capture image dynamic range and fidelity statistics
 def calcStats(nchanindx,pointingsindx,perrindx,fdsum):
@@ -1100,15 +1124,18 @@ def calcStats(nchanindx,pointingsindx,perrindx,fdsum):
               'asec_numpt-'+str(pointings[pointingsindx])
     if numchan == 1:
         ia.open(imgdir+'/sim.image')
-        img_max = ia.statistics()['max'][0]
+        img_max   = ia.statistics()['max'][0]
         ia.close()
         ia.open(imgdir+'/sim.residual')
-        res_rms = ia.statistics()['rms'][0]
+        res_rms   = ia.statistics()['rms'][0]
         ia.close()
-        ia.open(imgdir+'/sim.image.pbcor.masked')
-        imgPB_sum = ia.statistics()['sum'][0]
+        ia.open(imgdir+'/sim.pb')
+        pbmask    = np.squeeze(ia.getchunk()).flatten()
+        pbmask    = np.where(pbmask<pbthresh,0,1)
         ia.close()
-        beamvol = getBeamVol(imgdir+'/sim.image.pbcor.masked')
+        ia.open(imgdir+'/sim.image.dirty')
+        dimgvals = np.squeeze(ia.getchunk()).flatten()
+        ia.close()
     else:
         ia.open(imgdir+'/sim.image.tt0')
         img_max = ia.statistics()['max'][0]
@@ -1122,13 +1149,24 @@ def calcStats(nchanindx,pointingsindx,perrindx,fdsum):
         res_rms = ia.statistics(includepix=0.1,
                                 robust=True)['medabsdevmed'][0] * 1.48
         ia.close()
-        ia.open(imgdir+'/sim.pbcor.image.tt0.masked')
-        imgPB_sum = ia.statistics()['sum'][0]
+        ia.open(imgdir+'/sim.pb.tt0')
+        pbmask    = np.squeeze(ia.getchunk()).flatten()
+        pbmask    = np.where(pbmask<pbthresh,0,1)
         ia.close()
-        beamvol = getBeamVol(imgdir+'/sim.pbcor.image.tt0.masked')
+        ia.open(imgdir+'/sim.image.tt0.dirty')
+        dimgvals = np.squeeze(ia.getchunk()).flatten()
+        ia.close()
     
-    dr  = img_max / res_rms
-    imf = 1 - np.abs(imgPB_sum/beamvol - fdsum) / fdsum
+    dr = img_max / res_rms
+    ia.open(imgdir+'/sim.truesky.pbattn.conv')
+    tpbacvals = np.squeeze(ia.getchunk()).flatten()
+    ia.close()
+    # apply pbthresh mask
+    dimgvals  = np.where(pbmask,dimgvals,0)
+    tpbacvals = np.where(pbmask,tpbacvals,0)
+    maxvals   = np.maximum.reduce([dimgvals,tpbacvals])
+    absdeltas = np.abs(dimgvals-tpbacvals)
+    imf = 1 - (maxvals*absdeltas).sum() / (maxvals*maxvals).sum()
     return (dr,imf)
 
 def main():
@@ -1139,7 +1177,7 @@ def main():
     for k in range(len(pointings)):       # number of pointings
         for i in range(len(nchan)):       # number of channels
             if not imgOnly:
-                makeModelImages(i,k)
+                makeModelImages(i,k)                                    ####################### move back under if not imgOnly
                 templateImgs,templateImgCoords = makeTemplateImgs(i,k)
                 if not testing:
                     # If testing, keep template image to later copy and store AIFs
