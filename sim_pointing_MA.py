@@ -1,5 +1,5 @@
 # C. Hales, NRAO
-# version 1.0 (27 April 2020)
+# version 1.0 (24 April 2020)
 #
 # Measure image dynamic range and fidelity achievable with different dynamic pointing
 # errors for ngVLA MA revC (214 x 18m).  The procedure involves constructing mis-pointed
